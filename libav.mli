@@ -1,1 +1,1 @@
-external get_image : string -> unit = "get_image"
+external get_image : string -> 'a array array = "get_image"

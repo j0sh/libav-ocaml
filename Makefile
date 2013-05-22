@@ -13,7 +13,7 @@ test.cmx: libav.mli test.ml
 	ocamlopt -c $^
 
 test: test.cmx libav.a
-	ocamlopt -verbose -o $@ $< -cclib -L. -cclib -llibav -cclib "$(LIBS)"
+	ocamlopt -verbose -o $@ graphics.cmxa $< -cclib -L. -cclib -llibav -cclib "$(LIBS)"
 
 main:
 	ocamlfind ocamlc graphics.cma main.ml

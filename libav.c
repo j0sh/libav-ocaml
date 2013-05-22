@@ -1,8 +1,38 @@
 #include <caml/mlvalues.h>
+#include <caml/alloc.h>
+#include <caml/memory.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 #include <libavutil/pixfmt.h>
+
+static void rgbline2ocaml(AVFrame *src, value img, int line)
+{
+    int i;
+    uint8_t *d = src->data[0] + src->linesize[0]*line;
+
+    CAMLparam1(img);
+    CAMLlocal1(arr);
+    arr = caml_alloc(src->width, 0);
+    caml_modify(&Field(img, line), arr);
+
+    for (i = 0; i < src->width; i++) {
+        int rgb = d[0] << 16 | d[1] << 8 | d[2];
+        caml_modify(&Field(arr, i), Val_int(rgb));
+        d += 3;
+    }
+    CAMLreturn0;
+}
+
+value frame2ocaml(AVFrame *src)
+{
+    int i;
+    CAMLparam0();
+    CAMLlocal1(img);
+    img = caml_alloc(src->height, 0);
+    for (i = 0; i < src->height; i++) rgbline2ocaml(src, img, i);
+    CAMLreturn(img);
+}
 
 CAMLprim value
 get_image(value str)
@@ -15,6 +45,9 @@ get_image(value str)
     AVFrame *rgb = av_frame_alloc();
     struct SwsContext *sws = NULL;
     int i, err;
+
+    CAMLparam1(str);
+    CAMLlocal1(img);
 
     av_register_all();
     err = avformat_open_input(&ic, String_val(str),  NULL, NULL);
@@ -54,10 +87,12 @@ get_image(value str)
         }
     }
 
+    img = frame2ocaml(rgb);
+
     av_free_packet(&pkt);
     sws_freeContext(sws);
     av_frame_free(&frame);
     av_frame_free(&rgb);
     avformat_close_input(&ic);
-    return Val_unit;
+    CAMLreturn(img);
 }
