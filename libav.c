@@ -1,10 +1,26 @@
 #include <caml/mlvalues.h>
 #include <caml/alloc.h>
 #include <caml/memory.h>
+#include <caml/custom.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 #include <libavutil/pixfmt.h>
+
+void avframe_finalize(value v)
+{
+    AVFrame *frame = *(AVFrame**)Data_custom_val(v);
+    av_frame_free(&frame);
+}
+
+static struct custom_operations avframe_ops = {
+    identifier: "avframe handling",
+    finalize: avframe_finalize,
+    compare: custom_compare_default,
+    hash: custom_hash_default,
+    serialize: custom_serialize_default,
+    deserialize: custom_deserialize_default 
+};
 
 static void rgbline2ocaml(AVFrame *src, value img, int line)
 {
@@ -24,11 +40,12 @@ static void rgbline2ocaml(AVFrame *src, value img, int line)
     CAMLreturn0;
 }
 
-value frame2ocaml(AVFrame *src)
+CAMLprim value frame2ocaml(value v)
 {
     int i;
-    CAMLparam0();
+    CAMLparam1(v);
     CAMLlocal1(img);
+    AVFrame *src = *(AVFrame**)Data_custom_val(v);
     img = caml_alloc(src->height, 0);
     for (i = 0; i < src->height; i++) rgbline2ocaml(src, img, i);
     CAMLreturn(img);
@@ -47,7 +64,7 @@ get_image(value str)
     int i, err;
 
     CAMLparam1(str);
-    CAMLlocal1(img);
+    CAMLlocal1(ret);
 
     av_register_all();
     err = avformat_open_input(&ic, String_val(str),  NULL, NULL);
@@ -87,12 +104,12 @@ get_image(value str)
         }
     }
 
-    img = frame2ocaml(rgb);
+    ret = caml_alloc_custom(&avframe_ops, sizeof(AVFrame**), 0, 1);
+    memcpy(Data_custom_val(ret), &rgb, sizeof(AVFrame**));
 
     av_free_packet(&pkt);
     sws_freeContext(sws);
     av_frame_free(&frame);
-    av_frame_free(&rgb);
     avformat_close_input(&ic);
-    CAMLreturn(img);
+    CAMLreturn(ret);
 }
