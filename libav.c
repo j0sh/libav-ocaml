@@ -103,6 +103,33 @@ write_image(value v, value fname)
     return Val_unit;
 }
 
+CAMLprim value
+ocaml2frame(value img)
+{
+    int i, j;
+    CAMLparam1(img);
+    CAMLlocal2(row, framev);
+    AVFrame *frame = av_frame_alloc();
+    row = Field(img, 0);
+    frame->format = AV_PIX_FMT_RGB24;
+    frame->height = Wosize_val(img);
+    frame->width = Wosize_val(row);
+    av_frame_get_buffer(frame, 8);
+    for (i = 0; i < frame->height; i++) {
+        row = Field(img, i);
+        uint8_t *data = frame->data[0] + frame->linesize[0]*i;
+        for (j = 0; j < frame->width; j++) {
+            int rgb = Int_val(Field(row, j));
+            *data++ = rgb >> 16;
+            *data++ = (rgb >> 8) & 0xFF;
+            *data++ = rgb & 0xFF;
+        }
+    }
+    framev = caml_alloc_custom(&avframe_ops, sizeof(AVFrame**), 0, 1);
+    memcpy(Data_custom_val(framev), &frame, sizeof(AVFrame**));
+    CAMLreturn(framev);
+}
+
 static void rgbline2ocaml(AVFrame *src, value img, int line)
 {
     int i;
