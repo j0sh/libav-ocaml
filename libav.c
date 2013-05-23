@@ -22,6 +22,87 @@ static struct custom_operations avframe_ops = {
     deserialize: custom_deserialize_default 
 };
 
+static void write_image_in(AVFrame *frame, char *fname)
+{
+    AVOutputFormat *fmt;
+    AVFormatContext *oc;
+    AVCodecContext *avctx;
+    AVCodec *codec;
+    AVStream *st;
+    AVPacket pkt = {0};
+    int ret, got_pkt;
+
+    fmt = av_guess_format(NULL, fname, NULL);
+    if (!fmt) {
+        fprintf(stderr, "Unable to deduce output format\n");
+        return;
+    }
+    oc = avformat_alloc_context();
+    if (!oc) {
+        fprintf(stderr, "Unable to alloc output context\n");
+        return;
+    }
+    oc->oformat = fmt;
+    snprintf(oc->filename, sizeof(oc->filename), "%s", fname);
+    if (fmt->video_codec == AV_CODEC_ID_NONE) {
+        fprintf(stderr, "Unable to find codec\n");
+        goto out_fail;
+    }
+    fmt->video_codec = av_guess_codec(fmt, NULL, fname, NULL, AVMEDIA_TYPE_VIDEO);
+    codec = avcodec_find_encoder(fmt->video_codec);
+    if (!codec) {
+        fprintf(stderr, "Codec not found.\n");
+        goto out_fail;
+    }
+    st = avformat_new_stream(oc, codec);
+    if (!st) {
+        fprintf(stderr, "Unable to alloc stream\n");
+        goto out_fail;
+    }
+    avctx = st->codec;
+    avctx->width = frame->width;
+    avctx->height = frame->height;
+    avctx->pix_fmt = frame->format;
+    avctx->time_base.den = 10;
+    avctx->time_base.num = 1;
+    if (avcodec_open2(avctx, NULL, NULL) < 0) {
+        fprintf(stderr, "Unable to open codec\n");
+        goto out_fail;
+    }
+
+    if (!(fmt->flags & AVFMT_NOFILE)) {
+        if (avio_open(&oc->pb, fname, AVIO_FLAG_WRITE) < 0) {
+            fprintf(stderr, "Unable to open file\n");
+            goto out_fail;
+        }
+    }
+
+    avformat_write_header(oc, NULL);
+
+    av_init_packet(&pkt);
+    ret = avcodec_encode_video2(avctx, &pkt, frame, &got_pkt);
+    if (!ret && got_pkt && pkt.size) {
+        pkt.stream_index = st->index;
+        if (av_interleaved_write_frame(oc, &pkt) != 0) {
+            fprintf(stderr, "Error while writing packet\n");
+            goto out_fail;
+        }
+    } else {
+        fprintf(stderr, "Error encoding...\n");
+        goto out_fail;
+    }
+out_fail:
+    avformat_free_context(oc);
+}
+
+CAMLprim value
+write_image(value v, value fname)
+{
+    AVFrame *src = *(AVFrame**)Data_custom_val(v);
+    write_image_in(src, String_val(fname));
+    return Val_unit;
+}
+
 static void rgbline2ocaml(AVFrame *src, value img, int line)
 {
     int i;
