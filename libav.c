@@ -63,7 +63,7 @@ static void write_image_in(AVFrame *frame, char *fname)
     avctx->width = frame->width;
     avctx->height = frame->height;
     avctx->pix_fmt = frame->format;
-    avctx->time_base.den = 10;
+    avctx->time_base.den = 1;
     avctx->time_base.num = 1;
     if (avcodec_open2(avctx, NULL, NULL) < 0) {
         fprintf(stderr, "Unable to open codec\n");
@@ -91,6 +91,7 @@ static void write_image_in(AVFrame *frame, char *fname)
         fprintf(stderr, "Error encoding...\n");
         goto out_fail;
     }
+    av_write_trailer(oc);
 out_fail:
     avformat_free_context(oc);
 }
