@@ -2,6 +2,7 @@
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/custom.h>
+#include <caml/fail.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
@@ -19,10 +20,12 @@ static struct custom_operations avframe_ops = {
     compare: custom_compare_default,
     hash: custom_hash_default,
     serialize: custom_serialize_default,
-    deserialize: custom_deserialize_default 
+    deserialize: custom_deserialize_default
 };
 
-static void write_image_in(AVFrame *frame, char *fname)
+typedef enum {OK, MUXER_NF, FMT_ALLOC, CODEC_NF, STREAM_ALLOC,
+    CODEC_OPEN, FILE_NF, WRITE_ERR, ENCODE_ERR} write_res_t;
+static write_res_t write_image_in(AVFrame *frame, char *fname)
 {
     AVOutputFormat *fmt;
     AVFormatContext *oc;
@@ -33,30 +36,17 @@ static void write_image_in(AVFrame *frame, char *fname)
     int ret, got_pkt;
 
     fmt = av_guess_format(NULL, fname, NULL);
-    if (!fmt) {
-        fprintf(stderr, "Unable to deduce output format\n");
-        return;
-    }
+    if (!fmt) return MUXER_NF;
     oc = avformat_alloc_context();
-    if (!oc) {
-        fprintf(stderr, "Unable to alloc output context\n");
-        return;
-    }
+    if (!oc) return FMT_ALLOC;
     oc->oformat = fmt;
     snprintf(oc->filename, sizeof(oc->filename), "%s", fname);
-    if (fmt->video_codec == AV_CODEC_ID_NONE) {
-        fprintf(stderr, "Unable to find codec\n");
-        goto out_fail;
-    }
     fmt->video_codec = av_guess_codec(fmt, NULL, fname, NULL, AVMEDIA_TYPE_VIDEO);
     codec = avcodec_find_encoder(fmt->video_codec);
-    if (!codec) {
-        fprintf(stderr, "Codec not found.\n");
-        goto out_fail;
-    }
+    if (!codec) return CODEC_NF;
     st = avformat_new_stream(oc, codec);
     if (!st) {
-        fprintf(stderr, "Unable to alloc stream\n");
+        ret = STREAM_ALLOC;
         goto out_fail;
     }
     avctx = st->codec;
@@ -66,13 +56,13 @@ static void write_image_in(AVFrame *frame, char *fname)
     avctx->time_base.den = 1;
     avctx->time_base.num = 1;
     if (avcodec_open2(avctx, NULL, NULL) < 0) {
-        fprintf(stderr, "Unable to open codec\n");
+        ret = CODEC_NF;
         goto out_fail;
     }
 
     if (!(fmt->flags & AVFMT_NOFILE)) {
         if (avio_open(&oc->pb, fname, AVIO_FLAG_WRITE) < 0) {
-            fprintf(stderr, "Unable to open file\n");
+            ret = FILE_NF;
             goto out_fail;
         }
     }
@@ -84,24 +74,48 @@ static void write_image_in(AVFrame *frame, char *fname)
     if (!ret && got_pkt && pkt.size) {
         pkt.stream_index = st->index;
         if (av_interleaved_write_frame(oc, &pkt) != 0) {
-            fprintf(stderr, "Error while writing packet\n");
+            ret = WRITE_ERR;
             goto out_fail;
         }
     } else {
-        fprintf(stderr, "Error encoding...\n");
+        ret = ENCODE_ERR;
         goto out_fail;
     }
     av_write_trailer(oc);
+    return OK;
 out_fail:
     avformat_free_context(oc);
+    return ret;
+}
+
+value handle_write_res(write_res_t res)
+{
+    switch(res) {
+    case MUXER_NF:
+        caml_failwith("Unable to deduce output format");
+    case FMT_ALLOC:
+        caml_failwith("Unable to alloc output context");
+    case CODEC_NF:
+        caml_failwith("Unable to find codec");
+    case STREAM_ALLOC:
+        caml_failwith("Unable to alloc stream");
+    case FILE_NF:
+        caml_failwith("Unable to open file");
+    case WRITE_ERR:
+        caml_failwith("Error while writing packet");
+    case ENCODE_ERR:
+        caml_failwith("Error encoding");
+    default: ;
+    }
+    return Val_unit;
 }
 
 CAMLprim value
 write_image(value v, value fname)
 {
     AVFrame *src = *(AVFrame**)Data_custom_val(v);
-    write_image_in(src, String_val(fname));
-    return Val_unit;
+    write_res_t res = write_image_in(src, String_val(fname));
+    return handle_write_res(res);
 }
 
 CAMLprim value
