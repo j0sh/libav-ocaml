@@ -8,6 +8,8 @@
 #include <libswscale/swscale.h>
 #include <libavutil/pixfmt.h>
 
+static value* eof_exception = NULL;
+
 void avframe_finalize(value v)
 {
     AVFrame *frame = *(AVFrame**)Data_custom_val(v);
@@ -189,14 +191,15 @@ get_image(value str)
     CAMLparam1(str);
     CAMLlocal1(ret);
 
-    av_register_all();
     err = avformat_open_input(&ic, String_val(str),  NULL, NULL);
-    if (err < 0) printf("error!\n");
+    if (err < 0)
+        caml_failwith("Unable to open input context");
     avformat_find_stream_info(ic, NULL);
     for (i = 0; i < ic->nb_streams; i++) {
         avctx = ic->streams[i]->codec;
         codec = avcodec_find_decoder(avctx->codec_id);
-        if (!codec || avcodec_open2(avctx, codec, NULL)) printf("error opening!\n");
+        if (!codec || avcodec_open2(avctx, codec, NULL))
+            caml_failwith("Unable to open codec");
         if (AVMEDIA_TYPE_VIDEO == avctx->codec_type && !sws) {
             int w = avctx->width, h = avctx->height;
             sws = sws_getContext(w, h, avctx->pix_fmt, w, h, PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, 0);
@@ -210,10 +213,10 @@ get_image(value str)
     err = av_read_frame(ic, &pkt);
     if (err < 0) {
         if (err == AVERROR_EOF || ic->pb && ic->pb->eof_reached) {
-            printf("eof reached\n");
+            caml_raise_constant(*eof_exception);
         }
         if (ic->pb && ic->pb->error) {
-            printf("pb_error\n");
+            caml_failwith("pb_error");
         }
     }
 
@@ -235,4 +238,12 @@ get_image(value str)
     av_frame_free(&frame);
     avformat_close_input(&ic);
     CAMLreturn(ret);
+}
+
+CAMLprim value
+libav_init(value unit)
+{
+    av_register_all();
+    eof_exception = (value*)caml_named_value("eof exception");
+    return Val_unit;
 }
