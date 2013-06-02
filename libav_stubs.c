@@ -25,6 +25,21 @@ static struct custom_operations avframe_ops = {
     deserialize: custom_deserialize_default
 };
 
+void avinput_finalize(value v)
+{
+    AVFormatContext *ic = *(AVFormatContext**)Data_custom_val(v);
+    avformat_close_input(&ic);
+}
+
+static struct custom_operations avinput_ops = {
+    identifier: "avinput handling",
+    finalize: avinput_finalize,
+    compare: custom_compare_default,
+    hash: custom_hash_default,
+    serialize: custom_serialize_default,
+    deserialize: custom_deserialize_default
+};
+
 typedef enum {OK, MUXER_NF, FMT_ALLOC, CODEC_NF, STREAM_ALLOC,
     CODEC_OPEN, FILE_NF, WRITE_ERR, ENCODE_ERR} write_res_t;
 static write_res_t write_image_in(AVFrame *frame, char *fname)
@@ -174,6 +189,94 @@ CAMLprim value frame2ocaml(value v)
     img = caml_alloc(src->height, 0);
     for (i = 0; i < src->height; i++) rgbline2ocaml(src, img, i);
     CAMLreturn(img);
+}
+
+CAMLprim value
+open_input(value str)
+{
+    AVFormatContext *ic = NULL;
+    AVCodecContext *avctx;
+    AVCodec *codec;
+    int i, err;
+
+    CAMLparam1(str);
+    CAMLlocal1(ret);
+
+    err = avformat_open_input(&ic, String_val(str),  NULL, NULL);
+    if (err < 0)
+        caml_failwith("Unable to open input context");
+    avformat_find_stream_info(ic, NULL);
+    for (i = 0; i < ic->nb_streams; i++) {
+        avctx = ic->streams[i]->codec;
+        codec = avcodec_find_decoder(avctx->codec_id);
+        if (!codec || avcodec_open2(avctx, codec, NULL))
+            caml_failwith("Unable to open codec");
+    }
+
+    ret = caml_alloc_custom(&avinput_ops, sizeof(AVFormatContext**), 0, 1);
+    memcpy(Data_custom_val(ret), &ic, sizeof(AVFormatContext**));
+    CAMLreturn(ret);
+}
+
+CAMLprim value
+get_frame(value avinput)
+{
+    CAMLparam1(avinput);
+    CAMLlocal1(ret);
+    AVFormatContext *ic = *(AVFormatContext**)Data_custom_val(avinput);
+    AVFrame *frame = av_frame_alloc();
+    AVFrame *rgb = av_frame_alloc();
+    AVCodecContext *avctx = NULL;
+    AVPacket pkt;
+    struct SwsContext *sws = NULL;
+    int i, err, got_pic = 0;
+
+    for(i = 0; i < ic->nb_streams; i++) {
+        avctx = ic->streams[i]->codec;
+        if (AVMEDIA_TYPE_VIDEO == avctx->codec_type && !sws) {
+            int w = avctx->width, h = avctx->height;
+            sws = sws_getContext(w, h, avctx->pix_fmt, w, h,
+                PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, 0);
+            rgb->format = AV_PIX_FMT_RGB24;
+            rgb->width = w;
+            rgb->height = h;
+            av_frame_get_buffer(rgb, 8);
+            break;
+        }
+    }
+    if (i == ic->nb_streams)
+        caml_failwith("Unable to open video stream");
+    av_init_packet(&pkt);
+    while (!got_pic) {
+    err = av_read_frame(ic, &pkt);
+
+    if (err < 0) {
+        if (err == AVERROR_EOF || ic->pb && ic->pb->eof_reached) {
+            caml_raise_constant(*eof_exception);
+        }
+        if (ic->pb && ic->pb->error) {
+            caml_failwith("pb_error");
+        }
+    }
+
+    avctx = ic->streams[pkt.stream_index]->codec;
+    if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+        avcodec_decode_video2(avctx, frame, &got_pic, &pkt);
+        if (got_pic) {
+            sws_scale(sws, (const uint8_t* const*)frame->data, frame->linesize, 0, avctx->height, rgb->data, rgb->linesize);
+            av_frame_unref(frame);
+        }
+    }
+    }
+
+    ret = caml_alloc_custom(&avframe_ops, sizeof(AVFrame**), 0, 1);
+    memcpy(Data_custom_val(ret), &rgb, sizeof(AVFrame**));
+
+    av_free_packet(&pkt);
+    sws_freeContext(sws);
+    av_frame_free(&frame);
+
+    CAMLreturn(ret);
 }
 
 CAMLprim value
