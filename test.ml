@@ -5,6 +5,7 @@ let _ = Graphics.open_graph "";;
 let shuffle = Array.sort (fun _ _ -> (Random.int 3) - 1)
 
 let _ =
+Libav.init ();
 let frame = Libav.get_image "/home/josh/thesis/eva.jpg" in
 let mtx = Libav.to_matrix frame in
 let _ = shuffle mtx in
