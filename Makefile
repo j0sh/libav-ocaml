@@ -9,11 +9,17 @@ libav_stubs.o: libav_stubs.c
 libav.a : libav_stubs.o
 	ocamlmklib -o libav $< $(LIBS)
 
-test.cmx: libav.mli test.ml
-	ocamlopt -c $^
+libav.cmi:
+	ocamlc libav.mli
 
-test: test.cmx libav.a
-	ocamlopt -verbose -o $@ graphics.cmxa $< -cclib -L. -cclib -llibav -cclib "$(LIBS)"
+libav.cmx: libav.cmi libav.a
+	ocamlopt -g -c libav.ml
+
+test.cmx:  libav.cmx
+	ocamlopt -g -c $< test.ml
+
+test: libav.cmx test.cmx
+	ocamlopt -g -verbose -o $@ graphics.cmxa $^ -cclib "-L. -llibav $(LIBS)"
 
 main:
 	ocamlfind ocamlc graphics.cma main.ml

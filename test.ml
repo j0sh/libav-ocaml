@@ -1,3 +1,5 @@
+open Libav
+
 let _ = Graphics.open_graph "";;
 
 let shuffle = Array.sort (fun _ _ -> (Random.int 3) - 1)

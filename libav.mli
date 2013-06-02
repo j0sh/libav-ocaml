@@ -1,5 +1,9 @@
-type avframe
-external to_matrix : avframe -> 'a array array = "frame2ocaml"
-external from_matrix : 'a array array -> avframe = "ocaml2frame"
-external get_image : string -> avframe = "get_image"
-external write_image : avframe -> string -> unit = "write_image"
+module Libav : sig
+
+    type avframe
+    val get_image : string -> avframe
+    val write_image : avframe -> string -> unit
+    val to_matrix : avframe -> 'a array array
+    val from_matrix : 'a array array -> avframe
+
+end
