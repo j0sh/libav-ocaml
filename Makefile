@@ -21,6 +21,9 @@ test.cmx:  libav.cmx
 test: libav.cmx test.cmx
 	ocamlopt -g -verbose -o $@ graphics.cmxa $^ -cclib "-L. -llibav $(LIBS)"
 
+bbb: libav.cmx
+	ocamlopt -g -verbose -o $@ graphics.cmxa $^ bbb.ml -cclib "-L. -llibav $(LIBS)"
+
 main:
 	ocamlfind ocamlc graphics.cma main.ml
 
