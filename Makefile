@@ -3,10 +3,10 @@ default: test
 CFLAGS=-I"`ocamlc -where`" `pkg-config --cflags libavformat`
 LIBS=`pkg-config --libs libavformat libswscale`
 
-libav.o: libav.c
-	gcc -c $(CFLAGS) $< $(LIBS)
+libav_stubs.o: libav_stubs.c
+	gcc -g -c $(CFLAGS) $< $(LIBS)
 
-libav.a : libav.o
+libav.a : libav_stubs.o
 	ocamlmklib -o libav $< $(LIBS)
 
 test.cmx: libav.mli test.ml
