@@ -25,9 +25,17 @@ static struct custom_operations avframe_ops = {
     deserialize: custom_deserialize_default
 };
 
+typedef struct _AVInput {
+    AVFormatContext *ic;
+    struct SwsContext *sws;
+    int src_h, w, h, pixfmt; // swscale stuff
+} AVInput;
+
 void avinput_finalize(value v)
 {
-    AVFormatContext *ic = *(AVFormatContext**)Data_custom_val(v);
+    AVInput *in = (AVInput*)Data_custom_val(v);
+    AVFormatContext *ic = in->ic;
+    if (in->sws) sws_freeContext(in->sws);
     avformat_close_input(&ic);
 }
 
@@ -197,6 +205,7 @@ open_input(value str)
     AVFormatContext *ic = NULL;
     AVCodecContext *avctx;
     AVCodec *codec;
+    AVInput *avi;
     int i, err;
 
     CAMLparam1(str);
@@ -213,9 +222,51 @@ open_input(value str)
             caml_failwith("Unable to open codec");
     }
 
-    ret = caml_alloc_custom(&avinput_ops, sizeof(AVFormatContext**), 0, 1);
-    memcpy(Data_custom_val(ret), &ic, sizeof(AVFormatContext**));
+    ret = caml_alloc_custom(&avinput_ops, sizeof(AVInput), 0, 1);
+    avi = (AVInput*)Data_custom_val(ret);
+    memset(avi, 0, sizeof(AVInput));
+    avi->ic = ic;
     CAMLreturn(ret);
+}
+
+static int pixfmt_map[] = {
+    PIX_FMT_YUV420P,
+    PIX_FMT_RGB24
+};
+
+static int get_pixfmt(value pixfmt)
+{
+    int v = Int_val(pixfmt);
+    if (v < 0 || v >= sizeof(pixfmt_map)/sizeof(int)) return -1;
+    return pixfmt_map[v];
+}
+
+CAMLprim value
+set_swscale(value avinput, value pixfmt, value w, value h)
+{
+    CAMLparam4(avinput, pixfmt, w, h);
+    AVInput *avi = (AVInput*)Data_custom_val(avinput);
+    AVFormatContext *ic = avi->ic;
+    int i, libav_pixfmt = get_pixfmt(pixfmt);
+    if (-1 == libav_pixfmt)
+        caml_failwith("set_swscale: Invalid pixel format");
+    avi->w = Int_val(w);
+    avi->h = Int_val(h);
+    avi->pixfmt = libav_pixfmt;
+    if (avi->sws) sws_freeContext(avi->sws);
+    for (i = 0; i < ic->nb_streams; i++) {
+        AVCodecContext *avctx = ic->streams[i]->codec;
+        if (AVMEDIA_TYPE_VIDEO == avctx->codec_type) {
+            avi->src_h = avctx->height;
+            avi->sws = sws_getContext(avctx->width, avctx->height,
+                avctx->pix_fmt, avi->w, avi->h,
+                libav_pixfmt, SWS_BICUBIC, NULL, NULL, 0);
+            break;
+        }
+    }
+    if (i == ic->nb_streams)
+        caml_failwith("set_swscale: No video streams");
+    CAMLreturn(Val_unit);
 }
 
 CAMLprim value
@@ -223,29 +274,23 @@ get_frame(value avinput)
 {
     CAMLparam1(avinput);
     CAMLlocal1(ret);
-    AVFormatContext *ic = *(AVFormatContext**)Data_custom_val(avinput);
+    AVInput *avi = (AVInput*)Data_custom_val(avinput);
+    AVFormatContext *ic = avi->ic;
     AVFrame *frame = av_frame_alloc();
-    AVFrame *rgb = av_frame_alloc();
+    AVFrame *outframe = frame;
     AVCodecContext *avctx = NULL;
     AVPacket pkt;
-    struct SwsContext *sws = NULL;
+    struct SwsContext *sws = avi->sws;
     int i, err, got_pic = 0;
 
-    for(i = 0; i < ic->nb_streams; i++) {
-        avctx = ic->streams[i]->codec;
-        if (AVMEDIA_TYPE_VIDEO == avctx->codec_type && !sws) {
-            int w = avctx->width, h = avctx->height;
-            sws = sws_getContext(w, h, avctx->pix_fmt, w, h,
-                PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, 0);
-            rgb->format = AV_PIX_FMT_RGB24;
-            rgb->width = w;
-            rgb->height = h;
-            av_frame_get_buffer(rgb, 8);
-            break;
-        }
+    if (avi->sws) {
+        outframe = av_frame_alloc();
+        outframe->format = avi->pixfmt;
+        outframe->width = avi->w;
+        outframe->height = avi->h;
+        av_frame_get_buffer(outframe, 8);
     }
-    if (i == ic->nb_streams)
-        caml_failwith("Unable to open video stream");
+
     av_init_packet(&pkt);
     while (!got_pic) {
     err = av_read_frame(ic, &pkt);
@@ -262,19 +307,20 @@ get_frame(value avinput)
     avctx = ic->streams[pkt.stream_index]->codec;
     if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
         avcodec_decode_video2(avctx, frame, &got_pic, &pkt);
-        if (got_pic) {
-            sws_scale(sws, (const uint8_t* const*)frame->data, frame->linesize, 0, avctx->height, rgb->data, rgb->linesize);
+        if (got_pic && sws) {
+            sws_scale(sws, (const uint8_t* const*)frame->data,
+                frame->linesize, 0, avi->src_h, outframe->data,
+                outframe->linesize);
             av_frame_unref(frame);
         }
     }
     }
 
     ret = caml_alloc_custom(&avframe_ops, sizeof(AVFrame**), 0, 1);
-    memcpy(Data_custom_val(ret), &rgb, sizeof(AVFrame**));
+    memcpy(Data_custom_val(ret), &outframe, sizeof(AVFrame**));
 
     av_free_packet(&pkt);
-    sws_freeContext(sws);
-    av_frame_free(&frame);
+    if (outframe != frame) av_frame_free(&frame);
 
     CAMLreturn(ret);
 }

@@ -5,6 +5,7 @@ let _ = Graphics.open_graph "";;
 
 let get_stream fname =
     let ctx = Libav.open_input fname in
+    Libav.set_swscale ctx Libav.RGB24 640 480;
     let get_mtx () = Some (Libav.to_matrix (Libav.get_frame ctx)) in
     Stream.from (fun _ -> try get_mtx () with End_of_file -> None)
 
