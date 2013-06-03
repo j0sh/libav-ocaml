@@ -229,6 +229,26 @@ open_input(value str)
     CAMLreturn(ret);
 }
 
+CAMLprim value
+get_dim(value avinput)
+{
+    CAMLparam1(avinput);
+    CAMLlocal1(dim);
+    AVInput *avi = (AVInput*)Data_custom_val(avinput);
+    AVFormatContext *ic = avi->ic;
+    int i;
+    dim = caml_alloc(2, 0);
+    for (i = 0; i < ic->nb_streams; i++) {
+        AVCodecContext *avctx = ic->streams[i]->codec;
+        if (AVMEDIA_TYPE_VIDEO == avctx->codec_type) {
+            Store_field(dim, 0, Val_int(avctx->width));
+            Store_field(dim, 1, Val_int(avctx->height));
+            CAMLreturn(dim);
+        }
+    }
+    caml_failwith("get_dim: No video streams");
+}
+
 static int pixfmt_map[] = {
     PIX_FMT_YUV420P,
     PIX_FMT_RGB24
@@ -242,16 +262,16 @@ static int get_pixfmt(value pixfmt)
 }
 
 CAMLprim value
-set_swscale(value avinput, value pixfmt, value w, value h)
+set_swscale(value avinput, value pixfmt, value dim)
 {
-    CAMLparam4(avinput, pixfmt, w, h);
+    CAMLparam3(avinput, pixfmt, dim);
     AVInput *avi = (AVInput*)Data_custom_val(avinput);
     AVFormatContext *ic = avi->ic;
     int i, libav_pixfmt = get_pixfmt(pixfmt);
     if (-1 == libav_pixfmt)
         caml_failwith("set_swscale: Invalid pixel format");
-    avi->w = Int_val(w);
-    avi->h = Int_val(h);
+    avi->w = Int_val(Field(dim, 0));
+    avi->h = Int_val(Field(dim, 1));
     avi->pixfmt = libav_pixfmt;
     if (avi->sws) sws_freeContext(avi->sws);
     for (i = 0; i < ic->nb_streams; i++) {

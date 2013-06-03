@@ -5,9 +5,11 @@ module Libav : sig
     type pixfmt =
     | YUV420P
     | RGB24
+    type dim = int * int (* width, height *)
     val init: unit -> unit
     val open_input: string -> avinput
-    val set_swscale: avinput -> pixfmt -> int -> int -> unit
+    val get_dim : avinput -> dim
+    val set_swscale: avinput -> pixfmt -> dim -> unit
     val get_frame: avinput -> avframe
     val get_image : string -> avframe
     val write_image : avframe -> string -> unit
